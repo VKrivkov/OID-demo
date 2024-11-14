@@ -1,0 +1,22 @@
+{
+  "name": "oidc-demo",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "OIDC Provider Demo",
+  "main": "idp.js",
+  "scripts": {
+    "start": "node idp.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.17.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jose": "^5.9.6",
+    "oidc-provider": "^8.1.0",
+    "sqlite3": "^5.1.7",
+    "typeorm": "^0.3.20"
+  }
+}
