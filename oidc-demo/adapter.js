@@ -1,235 +1,98 @@
-import { createConnection, EntitySchema } from 'typeorm';
+// adapter.js
+import QuickLRU from 'quick-lru';
 
-// Define each entity schema required by oidc-provider
+const storage = new QuickLRU({ maxSize: 1000 });
 
-// Client Entity
-const ClientSchema = new EntitySchema({
-  name: 'Client',
-  tableName: 'clients',
-  columns: {
-    client_id: { primary: true, type: 'varchar' },
-    client_secret: { type: 'varchar' },
-    redirect_uris: { type: 'simple-json' },
-    grant_types: { type: 'simple-json' },
-    response_types: { type: 'simple-json' },
-    token_endpoint_auth_method: { type: 'varchar' },
-    require_pkce: { type: 'boolean' },
-  },
-});
+function grantKeyFor(id) {
+  return `grant:${id}`;
+}
 
-// Session Entity
-const SessionSchema = new EntitySchema({
-  name: 'Session',
-  tableName: 'sessions',
-  columns: {
-    uid: { primary: true, type: 'varchar' },
-    jti: { type: 'varchar' },
-    grantId: { type: 'varchar' },
-    // Additional session properties
-  },
-});
+function sessionUidKeyFor(id) {
+  return `sessionUid:${id}`;
+}
 
-// Grant Entity
-const GrantSchema = new EntitySchema({
-  name: 'Grant',
-  tableName: 'grants',
-  columns: {
-    id: { primary: true, type: 'varchar' },
-    accountId: { type: 'varchar' },
-    claims: { type: 'simple-json' },
-  },
-});
+function userCodeKeyFor(userCode) {
+  return `userCode:${userCode}`;
+}
 
-// Code Entity
-const CodeSchema = new EntitySchema({
-  name: 'Code',
-  tableName: 'codes',
-  columns: {
-    code: { primary: true, type: 'varchar' },
-    client_id: { type: 'varchar' },
-    redirect_uri: { type: 'varchar' },
-    response_type: { type: 'varchar' },
-    scope: { type: 'varchar' },
-    state: { type: 'varchar' },
-    code_challenge: { type: 'varchar' },
-    code_challenge_method: { type: 'varchar' },
-  },
-});
+const grantable = new Set([
+  'AccessToken',
+  'AuthorizationCode',
+  'RefreshToken',
+  'DeviceCode',
+  'BackchannelAuthenticationRequest',
+]);
 
-// Access Token Entity
-const AccessTokenSchema = new EntitySchema({
-  name: 'AccessToken',
-  tableName: 'access_tokens',
-  columns: {
-    access_token: { primary: true, type: 'varchar' },
-    client_id: { type: 'varchar' },
-    account_id: { type: 'varchar' },
-    scope: { type: 'varchar' },
-    expires_at: { type: 'bigint' },
-  },
-});
-
-// Refresh Token Entity
-const RefreshTokenSchema = new EntitySchema({
-  name: 'RefreshToken',
-  tableName: 'refresh_tokens',
-  columns: {
-    refresh_token: { primary: true, type: 'varchar' },
-    client_id: { type: 'varchar' },
-    account_id: { type: 'varchar' },
-    scope: { type: 'varchar' },
-    expires_at: { type: 'bigint' },
-  },
-});
-
-// Device Code Entity
-const DeviceCodeSchema = new EntitySchema({
-  name: 'DeviceCode',
-  tableName: 'device_codes',
-  columns: {
-    device_code: { primary: true, type: 'varchar' },
-    user_code: { type: 'varchar' },
-    client_id: { type: 'varchar' },
-    scope: { type: 'varchar' },
-    expires_at: { type: 'bigint' },
-  },
-});
-
-// Interaction Entity
-const InteractionSchema = new EntitySchema({
-  name: 'Interaction',
-  tableName: 'interactions',
-  columns: {
-    uid: { primary: true, type: 'varchar' },
-    jti: { type: 'varchar' },
-    grantId: { type: 'varchar', nullable: true },
-    session: { type: 'simple-json', nullable: true },
-    params: { type: 'simple-json', nullable: true },
-  },
-});
-
-// Initialize TypeORM connection and adapter
-let connection;
-
-export const initializeAdapter = async () => {
-  connection = await createConnection({
-    type: 'sqlite',
-    database: 'oidc.sqlite',
-    synchronize: true, // Automatically sync schema; disable in production
-    logging: false,
-    entities: [
-      ClientSchema,
-      SessionSchema,
-      GrantSchema,
-      CodeSchema,
-      AccessTokenSchema,
-      RefreshTokenSchema,
-      DeviceCodeSchema,
-      InteractionSchema, // Add InteractionSchema to TypeORM entities
-    ],
-  });
-};
-
-// Factory function to create adapters for each model
-export const typeormAdapter = (model) => {
-  if (!connection) {
-    throw new Error('TypeORM connection not established. Call initializeAdapter() first.');
+class MemoryAdapter {
+  constructor(name) {
+    this.name = name;
   }
 
-  const repository = connection.getRepository(model);
+  key(id) {
+    return `${this.name}:${id}`;
+  }
 
-  return {
-    async upsert(id, payload, expiresIn) {
-      let entity;
-      if (model === 'Client') {
-        entity = await repository.findOne({ client_id: id }) || repository.create({ client_id: id });
-      } else if (model === 'Session') {
-        entity = await repository.findOne({ uid: id }) || repository.create({ uid: id });
-      } else if (model === 'Grant') {
-        entity = await repository.findOne(id) || repository.create({ id });
-      } else if (model === 'Code') {
-        entity = await repository.findOne({ code: id }) || repository.create({ code: id });
-      } else if (model === 'AccessToken') {
-        entity = await repository.findOne({ access_token: id }) || repository.create({ access_token: id });
-      } else if (model === 'RefreshToken') {
-        entity = await repository.findOne({ refresh_token: id }) || repository.create({ refresh_token: id });
-      } else if (model === 'DeviceCode') {
-        entity = await repository.findOne({ device_code: id }) || repository.create({ device_code: id });
-      } else if (model === 'Interaction') {
-        entity = await repository.findOne({ uid: id }) || repository.create({ uid: id });
+  async upsert(id, payload, expiresIn) {
+    const key = this.key(id);
+    storage.set(key, payload, expiresIn * 1000);
+
+    if (grantable.has(this.name) && payload.grantId) {
+      const grantKey = grantKeyFor(payload.grantId);
+      const grant = storage.get(grantKey);
+      if (!grant) {
+        storage.set(grantKey, [key]);
       } else {
-        throw new Error(`Unknown model: ${model}`);
+        grant.push(key);
       }
-      repository.merge(entity, payload);
-      await repository.save(entity);
-      return entity;
-    },
+    }
 
-    async find(id) {
-      if (model === 'Client') {
-        return repository.findOne({ client_id: id });
-      } else if (model === 'Session') {
-        return repository.findOne({ uid: id });
-      } else if (model === 'Grant') {
-        return repository.findOne(id);
-      } else if (model === 'Code') {
-        return repository.findOne({ code: id });
-      } else if (model === 'AccessToken') {
-        return repository.findOne({ access_token: id });
-      } else if (model === 'RefreshToken') {
-        return repository.findOne({ refresh_token: id });
-      } else if (model === 'DeviceCode') {
-        return repository.findOne({ device_code: id });
-      } else if (model === 'Interaction') {
-        return repository.findOne({ uid: id });
-      } else {
-        throw new Error(`Unknown model: ${model}`);
-      }
-    },
+    if (this.name === 'Session') {
+      storage.set(sessionUidKeyFor(payload.uid), id, expiresIn * 1000);
+    }
 
-    async findByUid(uid) {
-      if (model === 'Session' || model === 'Interaction') {
-        return repository.findOne({ uid });
-      }
-      return null;
-    },
+    if (payload.userCode) {
+      storage.set(userCodeKeyFor(payload.userCode), id, expiresIn * 1000);
+    }
+  }
 
-    async findByUserCode(userCode) {
-      if (model === 'DeviceCode') {
-        return repository.findOne({ user_code: userCode });
-      }
-      return null;
-    },
+  async find(id) {
+    const data = storage.get(this.key(id));
+    if (!data) return undefined;
+    return data;
+  }
 
-    async findByUidAndUserCode(uid, userCode) {
-      if (model === 'DeviceCode') {
-        return repository.findOne({ device_code: uid, user_code: userCode });
-      }
-      return null;
-    },
+  async findByUserCode(userCode) {
+    const id = storage.get(userCodeKeyFor(userCode));
+    return this.find(id);
+  }
 
-    async destroy(id) {
-      if (model === 'Interaction' || model === 'Session' || model === 'Code' || model === 'Grant' || model === 'AccessToken' || model === 'RefreshToken') {
-        await repository.delete({ uid: id });
-      }
-    },
+  async findByUid(uid) {
+    const id = storage.get(sessionUidKeyFor(uid));
+    return this.find(id);
+  }
 
-    async consume(id) {
-      if (model === 'Code') {
-        await repository.delete({ code: id });
-      }
-    },
+  async destroy(id) {
+    const key = this.key(id);
+    storage.delete(key);
+  }
 
-    async destroyByGrantId(grantId) {
-      if (model === 'Grant') {
-        await repository.delete(grantId);
-      }
-    },
+  async revokeByGrantId(grantId) {
+    const grantKey = grantKeyFor(grantId);
+    const grant = storage.get(grantKey);
+    if (grant) {
+      grant.forEach((token) => storage.delete(token));
+      storage.delete(grantKey);
+    }
+  }
 
-    async revokeByGrantId(grantId) {
-      if (model === 'AccessToken' || model === 'RefreshToken') {
-        await repository.delete({ grantId });
-      }
-    },
-  };
-};
+  async consume(id) {
+    const key = this.key(id);
+    const data = storage.get(key);
+    if (data) {
+      data.consumed = Math.floor(Date.now() / 1000);
+      storage.set(key, data);
+    }
+  }
+}
+
+export default MemoryAdapter;

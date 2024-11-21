@@ -1,0 +1,17 @@
+<!-- views/consent.ejs -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Authorize</title>
+</head>
+<body>
+  <h1>Authorize <%= client.client_id %></h1>
+  <p>Do you allow <%= client.client_id %> to access your data?</p>
+  <form method="post" action="/interaction/<%= uid %>/confirm">
+    <button type="submit">Authorize</button>
+  </form>
+  <form method="post" action="/interaction/<%= uid %>/abort">
+    <button type="submit">Deny</button>
+  </form>
+</body>
+</html>
