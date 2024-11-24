@@ -13,6 +13,8 @@ const caCert = fs.readFileSync('cert.pem');
 const httpsAgent = new https.Agent({ ca: caCert, rejectUnauthorized: false });
 
 const redirect_uri = 'https://localhost:3000/callback';
+const clientId = 'client_app';
+const clientSecret = 'client_secret';
 
 // Configure session middleware
 app.use(
@@ -29,11 +31,12 @@ let config;
 (async () => {
   try {
     const server = new URL('https://localhost:4000'); // OIDC provider URL
-    const clientId = 'client_app';
-    const clientSecret = 'client_secret';
+    const clientAuthentication = client.ClientSecretBasic(clientSecret);
 
+    
     // Discover the issuer configuration using client.discovery
-    config = await client.discovery(server, clientId, clientSecret, httpsAgent, redirect_uri);
+    config = await client.discovery(server, clientId, undefined, clientAuthentication, httpsAgent );
+
     app.locals.oidcClient = config;
     console.log('OIDC configuration discovered successfully.');
   } catch (err) {
@@ -97,14 +100,26 @@ app.get('/callback', async (req, res) => {
       return res.send('OIDC configuration not yet loaded.');
     }
 
+
     // Construct the full callback URL
     const currentUrl = new URL(req.protocol + '://' + req.get('host') + req.originalUrl);
 
     // Exchange the authorization code for tokens
-    const tokens = await client.authorizationCodeGrant(config, currentUrl, {
-      pkceCodeVerifier: req.session.code_verifier,
-      expectedState: req.session.state,
-    });
+    const tokens = await client.authorizationCodeGrant(
+      config,
+      currentUrl,
+      {
+        pkceCodeVerifier: req.session.code_verifier,
+        expectedState: req.session.state,
+      },
+      undefined, // tokenEndpointParameters
+      {
+        clientAuthentication: client.ClientSecretBasic(clientSecret, clientId),
+        agent: httpsAgent, // Include the httpsAgent to handle self-signed certificates
+      }
+    );
+    
+
 
     // Store tokens in session
     req.session.tokenSet = tokens;
@@ -136,7 +151,11 @@ app.get('/profile', async (req, res) => {
 
   try {
     // Use the access token to request user info from the UserInfo endpoint
-    const userinfo = await client.fetchUserInfo(config, req.session.tokenSet.access_token);
+    const userinfo = await client.fetchUserInfo(
+      config,
+      req.session.tokenSet.access_token,
+      { agent: httpsAgent }
+    );
 
     const idTokenClaims = req.session.tokenSet.claims();
 

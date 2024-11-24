@@ -240,6 +240,13 @@ const options = {
   cert: fs.readFileSync(path.join(__dirname, 'cert.pem')),
 };
 
+oidc.on('token.issued', (token) => {
+  if (token.kind === 'AccessToken' || token.kind === 'RefreshToken' || token.kind === 'IdToken') {
+    console.log(`JWT issued (${token.kind}): ${token}`);
+  }
+});
+
+
 // Start the HTTPS server
 https.createServer(options, app).listen(4000, () => {
   console.log('OIDC Provider listening on port 4000');
