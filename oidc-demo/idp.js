@@ -11,8 +11,14 @@ import MemoryAdapter from './adapter.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
-app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
+
+
+// Define middleware for parsing URL-encoded and JSON bodies
+const parseUrlEncoded = express.urlencoded({ extended: false });
+const parseJson = express.json();
+
+
+
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -64,8 +70,8 @@ const configuration = {
 
   cookies: {
     keys: ['some secret key', 'and also the old rotated away some time ago', 'and one more'],
-    long: { signed: true, secure: false },
-    short: { signed: true, secure: false }
+    long: { signed: true, secure: true },
+    short: { signed: true, secure: true },
     },
 
   jwks,
@@ -74,6 +80,17 @@ const configuration = {
     openid: ['sub'],
     profile: ['name', 'email'],
     email: ['email', 'email_verified'],
+  },
+
+  ttl: {
+    AccessToken: 3600, // 1 hour
+    AuthorizationCode: 600, // 10 minutes
+    IdToken: 3600, // 1 hour
+    RefreshToken: 86400, // 1 day
+    Grant: 1209600, // 14 days
+    Interaction: 3600, // 1 hour
+    Session: 604800, // 7 days
+    DeviceCode: 600, // 10 minutes
   },
 
   scopes: ['openid', 'profile', 'email'],
@@ -100,17 +117,7 @@ const configuration = {
   interactions: {
     url(ctx, interaction) {
       return `/interaction/${interaction.uid}`;
-    },
-    ttl: {
-      AccessToken: 3600, // 1 hour
-    AuthorizationCode: 600, // 10 minutes
-    IdToken: 3600, // 1 hour
-    RefreshToken: 86400, // 1 day
-    Grant: 1209600, // 14 days
-    Interaction: 3600, // 1 hour
-    Session: 604800, // 7 days
-    DeviceCode: 600, // 10 minutes
-    },
+    }
   },
 
   features: {
@@ -159,7 +166,7 @@ app.get('/interaction/:uid', async (req, res, next) => {
 });
 
 
-app.post('/interaction/:uid/login', async (req, res, next) => {
+app.post('/interaction/:uid/login', parseUrlEncoded, parseJson, async (req, res, next) => {
   try {
     console.log('POST /interaction/:uid/login called with UID:', req.params.uid);
 
@@ -193,10 +200,12 @@ app.post('/interaction/:uid/login', async (req, res, next) => {
   }
 });
 
-app.post('/interaction/:uid/confirm', async (req, res, next) => {
+app.post('/interaction/:uid/confirm', parseUrlEncoded, parseJson, async (req, res, next) => {
   try {
     const details = await oidc.interactionDetails(req, res);
     const { uid, prompt, params, session } = details;
+
+    console.log('Interaction Confirm Details:', { uid, prompt, params, session });
 
     const grant = new oidc.Grant({
       accountId: session.accountId,
@@ -211,6 +220,9 @@ app.post('/interaction/:uid/confirm', async (req, res, next) => {
 
     const result = { consent: { grantId } };
 
+    console.log('Grant successfully saved, Result:', result);
+
+
     await oidc.interactionFinished(req, res, result, { mergeWithLastSubmission: true });
   } catch (err) {
     next(err);
@@ -218,7 +230,7 @@ app.post('/interaction/:uid/confirm', async (req, res, next) => {
 });
 
 
-app.post('/interaction/:uid/abort', async (req, res, next) => {
+app.post('/interaction/:uid/abort', parseUrlEncoded, parseJson, async (req, res, next) => {
   try {
     const result = {
       error: 'access_denied',
@@ -230,7 +242,6 @@ app.post('/interaction/:uid/abort', async (req, res, next) => {
   }
 });
 
-
 // Mount the OIDC provider
 app.use(oidc.callback());
 
@@ -240,11 +251,7 @@ const options = {
   cert: fs.readFileSync(path.join(__dirname, 'cert.pem')),
 };
 
-oidc.on('token.issued', (token) => {
-  if (token.kind === 'AccessToken' || token.kind === 'RefreshToken' || token.kind === 'IdToken') {
-    console.log(`JWT issued (${token.kind}): ${token}`);
-  }
-});
+
 
 
 // Start the HTTPS server

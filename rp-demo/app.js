@@ -124,6 +124,9 @@ app.get('/callback', async (req, res) => {
     // Store tokens in session
     req.session.tokenSet = tokens;
 
+    const idTokenClaims = tokens.claims();
+    req.session.expectedSubject = idTokenClaims.sub;
+
     console.log('Token Endpoint Response:', tokens);
     console.log('Access Token:', tokens.access_token);
     console.log('ID Token Claims:', tokens.claims());
@@ -150,14 +153,17 @@ app.get('/profile', async (req, res) => {
   }
 
   try {
+    const idTokenClaims = req.session.tokenSet;
+    const expectedSubject = req.session.expectedSubject;
+1
     // Use the access token to request user info from the UserInfo endpoint
     const userinfo = await client.fetchUserInfo(
       config,
       req.session.tokenSet.access_token,
+      expectedSubject,
       { agent: httpsAgent }
     );
 
-    const idTokenClaims = req.session.tokenSet.claims();
 
     res.send(`
       <h1>Profile</h1>
